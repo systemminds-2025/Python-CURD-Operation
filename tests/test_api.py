@@ -11,6 +11,9 @@ import pytest
 from fastapi.testclient import TestClient
 from pymongo.errors import PyMongoError
 
+# Local by default, deliberately. Tests create and drop a database per test,
+# which is not something to point at a shared cluster. Override only on
+# purpose, with TEST_MONGODB_URI.
 URI = os.environ.get("TEST_MONGODB_URI", "mongodb://localhost:27017")
 
 
