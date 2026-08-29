@@ -8,3 +8,8 @@ venv/
 
 # Real credentials — .env.example is the one that is committed.
 .env
+
+# Dependencies, wherever a runner decides to put them. A run that installs
+# into the checkout would otherwise show every library file as part of the
+# change someone is reviewing.
+.pylibs/
