@@ -107,3 +107,7 @@ def delete(col: Collection, task_id: str) -> bool:
     if oid is None:
         return False
     return col.delete_one({"_id": oid}).deleted_count > 0
+
+
+def delete_all(col: Collection) -> int:
+    return col.delete_many({}).deleted_count

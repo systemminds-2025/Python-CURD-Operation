@@ -1,6 +1,6 @@
 """A small CRUD API over a single `tasks` resource, stored in MongoDB.
 
-Six endpoints:
+Seven endpoints:
 
     POST   /tasks       create
     GET    /tasks       list, filterable and paged
@@ -8,6 +8,7 @@ Six endpoints:
     PUT    /tasks/{id}  replace
     PATCH  /tasks/{id}  edit some fields
     DELETE /tasks/{id}  remove
+    DELETE /tasks       remove all
 
 Configuration — the connection string included — comes from `.env`.
 Run it with:  uvicorn app.main:app --reload
@@ -113,3 +114,9 @@ def edit_task(task_id: str, payload: TaskPatch, col: Collection = Depends(collec
 def delete_task(task_id: str, col: Collection = Depends(collection)) -> None:
     if not crud.delete(col, task_id):
         raise HTTPException(http.HTTP_404_NOT_FOUND, f"No task with id {task_id}")
+
+
+@app.delete("/tasks", tags=["tasks"])
+def delete_all_tasks(col: Collection = Depends(collection)) -> dict:
+    """Remove every task. Responds with how many were deleted."""
+    return {"deleted": crud.delete_all(col)}

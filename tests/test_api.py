@@ -134,6 +134,16 @@ def test_delete_then_gone(client):
     assert client.delete(f"/tasks/{task['id']}").status_code == 404
 
 
+def test_delete_all_removes_every_task(client):
+    make(client, title="a")
+    make(client, title="b")
+
+    r = client.delete("/tasks")
+    assert r.status_code == 200
+    assert r.json() == {"deleted": 2}
+    assert client.get("/tasks").json() == []
+
+
 def test_health_reports_the_database(client):
     body = client.get("/health").json()
     assert body["status"] == "ok"
