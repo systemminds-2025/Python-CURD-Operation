@@ -1,6 +1,8 @@
 fastapi>=0.109
 uvicorn[standard]>=0.32
 pydantic>=2.5
+pydantic-settings>=2.0
+pymongo>=4.6
 
 # tests
 pytest>=8.0

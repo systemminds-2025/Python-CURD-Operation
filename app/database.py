@@ -1,52 +1,52 @@
-"""SQLite connection handling.
+"""MongoDB connection handling.
 
-One file on disk, opened per request. SQLite connections are not safe to share
-across threads, so a request gets its own rather than the app holding one open
-for its lifetime.
+One client for the process, not one per request: PyMongo's client owns a
+connection pool and is thread-safe, so making a new one per request would build
+and tear down pools continuously.
 """
 
-import sqlite3
-from contextlib import contextmanager
-from pathlib import Path
+from pymongo import ASCENDING, DESCENDING, MongoClient
+from pymongo.collection import Collection
 
-DB_PATH = Path(__file__).resolve().parent.parent / "tasks.db"
+from .config import get_settings
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS tasks (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    title       TEXT    NOT NULL,
-    description TEXT    NOT NULL DEFAULT '',
-    status      TEXT    NOT NULL DEFAULT 'todo',
-    priority    TEXT    NOT NULL DEFAULT 'medium',
-    created_at  TEXT    NOT NULL,
-    updated_at  TEXT    NOT NULL
-);
-"""
+_client: MongoClient | None = None
 
 
-def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    # Rows come back as mappings, so a row converts straight to a response.
-    conn.row_factory = sqlite3.Row
-    # Off by default in SQLite, and this schema will grow foreign keys.
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def get_client() -> MongoClient:
+    global _client
+    if _client is None:
+        s = get_settings()
+        _client = MongoClient(
+            s.mongodb_uri,
+            serverSelectionTimeoutMS=s.mongodb_timeout_ms,
+            # BSON dates carry no zone, so without this reads come back naive
+            # while writes are UTC-aware — the same field serialising two ways
+            # depending on whether the client had just written it.
+            tz_aware=True,
+        )
+    return _client
 
 
-@contextmanager
-def get_db():
-    """A connection that commits on success and always closes."""
-    conn = connect()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+def get_collection() -> Collection:
+    s = get_settings()
+    return get_client()[s.mongodb_db][s.mongodb_collection]
 
 
 def init_db() -> None:
-    with get_db() as conn:
-        conn.executescript(SCHEMA)
+    """Create the indexes the queries rely on.
+
+    Both are idempotent, so this is safe to run on every start. Without the
+    compound index the default listing — filter by status, sort by newest —
+    is a collection scan followed by an in-memory sort.
+    """
+    col = get_collection()
+    col.create_index([("status", ASCENDING), ("created_at", DESCENDING)], name="status_created")
+    col.create_index([("created_at", DESCENDING)], name="created_desc")
+
+
+def close_client() -> None:
+    global _client
+    if _client is not None:
+        _client.close()
+        _client = None

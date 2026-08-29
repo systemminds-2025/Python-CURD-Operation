@@ -1,30 +1,47 @@
-"""End-to-end tests over the six endpoints, against a throwaway database."""
+"""End-to-end tests over the six endpoints, against a throwaway database.
 
-import importlib
+Each test gets its own MongoDB database, dropped afterwards, so tests never see
+each other's documents and the configured database is never touched.
+"""
+
 import os
-import tempfile
-from pathlib import Path
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from pymongo.errors import PyMongoError
+
+URI = os.environ.get("TEST_MONGODB_URI", "mongodb://localhost:27017")
 
 
 @pytest.fixture()
 def client(monkeypatch):
-    # A temp file per test, so tests never see each other's rows and the real
-    # tasks.db is never touched.
-    tmp = Path(tempfile.mkdtemp()) / "test.db"
+    db_name = f"taskapi_test_{uuid.uuid4().hex[:8]}"
 
-    from app import database
-    monkeypatch.setattr(database, "DB_PATH", tmp)
+    monkeypatch.setenv("MONGODB_URI", URI)
+    monkeypatch.setenv("MONGODB_DB", db_name)
 
-    from app import main
-    importlib.reload(main)
+    from app import config, database
 
-    with TestClient(main.app) as c:
-        yield c
+    # Settings are cached for the process, and the client is a module global;
+    # both have to be dropped or the test would talk to the real database.
+    config.get_settings.cache_clear()
+    database.close_client()
 
-    os.unlink(tmp)
+    from app.main import app
+
+    try:
+        with TestClient(app) as c:
+            yield c
+    except PyMongoError as e:
+        pytest.skip(f"MongoDB not reachable at {URI}: {e}")
+    finally:
+        try:
+            database.get_client().drop_database(db_name)
+        except PyMongoError:
+            pass
+        database.close_client()
+        config.get_settings.cache_clear()
 
 
 def make(client, **over):
@@ -36,9 +53,9 @@ def make(client, **over):
 
 def test_create_returns_201_and_defaults(client):
     task = make(client)
-    assert task["id"] > 0
+    assert len(task["id"]) == 24                 # an ObjectId, as a string
     assert task["title"] == "Write the docs"
-    assert task["status"] == "todo"          # the default, not sent
+    assert task["status"] == "todo"              # the default, not sent
     assert task["created_at"] == task["updated_at"]
 
 
@@ -62,9 +79,16 @@ def test_get_by_id(client):
 
 
 def test_get_missing_is_404(client):
-    r = client.get("/tasks/999")
+    missing = "0" * 24
+    r = client.get(f"/tasks/{missing}")
     assert r.status_code == 404
-    assert r.json()["detail"] == "No task with id 999"
+    assert r.json()["detail"] == f"No task with id {missing}"
+
+
+def test_malformed_id_is_404_not_500(client):
+    # "abc" is not an ObjectId. That has to be a miss, not a crash.
+    assert client.get("/tasks/abc").status_code == 404
+    assert client.delete("/tasks/abc").status_code == 404
 
 
 def test_put_replaces_every_field(client):
@@ -76,6 +100,7 @@ def test_put_replaces_every_field(client):
     assert r.status_code == 200
     assert r.json()["title"] == "new"
     assert r.json()["priority"] == "low"
+    assert r.json()["created_at"] == task["created_at"]   # replacement, not re-creation
 
 
 def test_put_requires_all_fields(client):
@@ -104,3 +129,9 @@ def test_delete_then_gone(client):
     assert client.delete(f"/tasks/{task['id']}").status_code == 204
     assert client.get(f"/tasks/{task['id']}").status_code == 404
     assert client.delete(f"/tasks/{task['id']}").status_code == 404
+
+
+def test_health_reports_the_database(client):
+    body = client.get("/health").json()
+    assert body["status"] == "ok"
+    assert body["database"] == "ok"

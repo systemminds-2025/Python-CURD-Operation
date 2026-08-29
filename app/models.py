@@ -55,9 +55,13 @@ class TaskPatch(BaseModel):
 
 
 class Task(BaseModel):
-    """What the API returns."""
+    """What the API returns.
 
-    id: int
+    Mongo's `_id` is an ObjectId; it is exposed as a plain string `id` so the
+    API's contract does not leak the driver's type onto every client.
+    """
+
+    id: str
     title: str
     description: str
     status: Status
